@@ -1,4 +1,5 @@
 import React from 'react';
+import type { AppUser, CloudSyncStatus } from '../types';
 import {
   Printer,
   Download,
@@ -10,6 +11,10 @@ import {
   PlusCircle,
   Smartphone,
   DownloadCloud,
+  Share2,
+  Cloud,
+  User,
+  Archive,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -18,13 +23,19 @@ interface NavbarProps {
   onPrint: () => void;
   onExportPdf: () => void;
   onExportExcel: () => void;
+  onOpenShare: () => void;
   onOpenHistory: () => void;
   onOpenClients: () => void;
   onOpenSettings: () => void;
   onOpenMobile: () => void;
+  onOpenAuth: () => void;
+  onOpenRecovery: () => void;
   canInstall?: boolean;
   onInstallApp?: () => void;
   historyCount: number;
+  deletedCount: number;
+  currentUser: AppUser | null;
+  syncStatus: CloudSyncStatus;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -33,13 +44,19 @@ export const Navbar: React.FC<NavbarProps> = ({
   onPrint,
   onExportPdf,
   onExportExcel,
+  onOpenShare,
   onOpenHistory,
   onOpenClients,
   onOpenSettings,
   onOpenMobile,
+  onOpenAuth,
+  onOpenRecovery,
   canInstall,
   onInstallApp,
   historyCount,
+  deletedCount,
+  currentUser,
+  syncStatus,
 }) => {
   return (
     <header className="no-print sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-2xs">
@@ -89,6 +106,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
+          {/* Online Recovery Archive Shortcut */}
+          <button
+            onClick={onOpenRecovery}
+            className="relative flex items-center gap-1.5 py-1.5 px-2 text-xs font-semibold text-amber-800 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+            title="Online Recovery & Deleted Trash"
+          >
+            <Archive className="w-4 h-4 text-amber-600" />
+            <span className="hidden lg:inline">Recovery</span>
+            {deletedCount > 0 && (
+              <span className="text-[10px] font-bold px-1.5 py-0.2 bg-amber-200 text-amber-900 rounded-full">
+                {deletedCount}
+              </span>
+            )}
+          </button>
+
           <button
             onClick={onOpenClients}
             className="flex items-center gap-1.5 py-1.5 px-2.5 text-xs font-semibold text-slate-700 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
@@ -128,17 +160,76 @@ export const Navbar: React.FC<NavbarProps> = ({
             <Settings className="w-4 h-4 text-slate-500" />
             <span className="hidden lg:inline">Settings</span>
           </button>
+
+          {/* Account & Multi-Device Sync Button */}
+          <button
+            onClick={onOpenAuth}
+            className={`flex items-center gap-1.5 py-1.5 px-2.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border ${
+              currentUser
+                ? 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 shadow-2xs'
+                : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600 shadow-sm'
+            }`}
+            title={
+              currentUser
+                ? `Signed in as ${currentUser.email} • Sync: ${syncStatus} • Click for details`
+                : 'Sign in to sync across devices'
+            }
+          >
+            {currentUser ? (
+              <>
+                <span className="relative flex h-2 w-2">
+                  <span
+                    className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      syncStatus === 'synced'
+                        ? 'bg-emerald-400'
+                        : syncStatus === 'syncing'
+                        ? 'bg-blue-400'
+                        : 'bg-amber-400'
+                    }`}
+                  />
+                  <span
+                    className={`relative inline-flex rounded-full h-2 w-2 ${
+                      syncStatus === 'synced'
+                        ? 'bg-emerald-500'
+                        : syncStatus === 'syncing'
+                        ? 'bg-blue-500'
+                        : 'bg-amber-500'
+                    }`}
+                  />
+                </span>
+                <User className="w-3.5 h-3.5 text-slate-600" />
+                <span className="hidden md:inline max-w-[100px] truncate font-bold">
+                  {currentUser.displayName || currentUser.email?.split('@')[0]}
+                </span>
+              </>
+            ) : (
+              <>
+                <Cloud className="w-4 h-4" />
+                <span className="hidden sm:inline font-bold">Sign In / Sync</span>
+              </>
+            )}
+          </button>
         </div>
 
-        {/* Action Buttons: Save, Print, PDF, Excel */}
+        {/* Action Buttons: Save, Share, PDF, Excel, Print */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={onSave}
             className="py-1.5 px-2.5 sm:px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Save changes to local history"
+            title="Save changes to local & cloud storage"
           >
             <Save className="w-3.5 h-3.5 text-slate-600" />
             <span className="hidden sm:inline">Save</span>
+          </button>
+
+          {/* SHARE BUTTON */}
+          <button
+            onClick={onOpenShare}
+            className="py-1.5 px-2.5 sm:px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+            title="Share invoice to Bluetooth, WhatsApp, Email & social apps"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Share</span>
           </button>
 
           <button

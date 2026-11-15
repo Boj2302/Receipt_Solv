@@ -54,6 +54,29 @@ export interface ReceiptDocument {
   templateStyle: TemplateStyle;
   createdAt: string;
   updatedAt: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  userId?: string;
+}
+
+export interface AppUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL?: string | null;
+  isAnonymous?: boolean;
+}
+
+export type CloudSyncStatus = 'synced' | 'syncing' | 'offline' | 'error' | 'not_configured' | 'local_only';
+
+export interface FirebaseConfigSettings {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId: string;
+  databaseURL?: string;
 }
 
 export interface CalculatedTotals {

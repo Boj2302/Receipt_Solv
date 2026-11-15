@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
-import type { ReceiptDocument, ClientInfo, CompanyInfo } from './types';
+import type {
+  ReceiptDocument,
+  ClientInfo,
+  CompanyInfo,
+  AppUser,
+  CloudSyncStatus,
+} from './types';
 import {
   INITIAL_DOCUMENT,
   getTodayDateFormatted,
@@ -7,13 +13,33 @@ import {
 import {
   getHistory,
   saveToHistory,
-  deleteFromHistory,
+  getDeletedHistory,
+  softDeleteFromHistory,
+  restoreFromDeleted,
+  permanentDeleteFromDeleted,
+  restoreAllFromDeleted,
   getSavedClients,
   saveClient,
   getSavedCompany,
   saveCompanyInfo,
   getNextOrderedInvoiceNumber,
+  setNextInvoiceNumberSetting,
 } from './utils/storage';
+import {
+  subscribeToAuth,
+  subscribeToCloudDocuments,
+  subscribeToUserSettings,
+  syncDocumentToCloud,
+  softDeleteDocumentInCloud,
+  restoreDocumentInCloud,
+  permanentDeleteDocumentInCloud,
+  restoreAllDocumentsInCloud,
+  syncCompanyToCloud,
+  syncClientsToCloud,
+  syncInvoiceCounterToCloud,
+  migrateLocalDataToCloud,
+  isFirebaseConfigured,
+} from './utils/firebase';
 import { exportToExcel } from './utils/excelExport';
 import { exportToPdf, triggerPrint } from './utils/pdfExport';
 import { Navbar } from './components/Navbar';
@@ -23,7 +49,18 @@ import { HistoryModal } from './components/HistoryModal';
 import { ClientsModal } from './components/ClientsModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MobileModal } from './components/MobileModal';
-import { CheckCircle2, Eye, Edit3, Printer, Download, DownloadCloud } from 'lucide-react';
+import { ShareModal } from './components/ShareModal';
+import { AuthModal } from './components/AuthModal';
+import { RecoveryModal } from './components/RecoveryModal';
+import {
+  CheckCircle2,
+  Eye,
+  Edit3,
+  Printer,
+  Download,
+  DownloadCloud,
+  Share2,
+} from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -41,15 +78,26 @@ export function App() {
     };
   });
 
-  const [history, setHistory] = useState<ReceiptDocument[]>([]);
-  const [clients, setClients] = useState<ClientInfo[]>([]);
+  const [history, setHistory] = useState<ReceiptDocument[]>(() => getHistory());
+  const [deletedHistory, setDeletedHistory] = useState<ReceiptDocument[]>(() => getDeletedHistory());
+  const [clients, setClients] = useState<ClientInfo[]>(() => getSavedClients());
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Authentication & Cloud Sync
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>(() =>
+    isFirebaseConfigured() ? 'offline' : 'local_only'
+  );
 
   // Modals state
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isClientsOpen, setIsClientsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
+  const [shareTargetDoc, setShareTargetDoc] = useState<ReceiptDocument | null>(null);
 
   // PWA beforeinstallprompt event
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -57,24 +105,79 @@ export function App() {
   // Mobile view toggle ('form' | 'preview')
   const [mobileTab, setMobileTab] = useState<'form' | 'preview'>('form');
 
-  // Load initial data from localStorage
-  useEffect(() => {
-    setHistory(getHistory());
-    setClients(getSavedClients());
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
+  // Load initial local data and listen to auth changes
+  useEffect(() => {
+    // Auth listener
+    const unsubAuth = subscribeToAuth((user) => {
+      setCurrentUser(user);
+      if (user) {
+        showToast(`Signed in as ${user.displayName || user.email}`);
+      }
+    });
+
+    // PWA install handler
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+    return () => {
+      unsubAuth();
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+    };
   }, []);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
+  // Multi-Device Cloud Sync via Firestore when user is logged in
+  useEffect(() => {
+    if (!currentUser || currentUser.uid.startsWith('local_')) {
+      return;
+    }
+
+    // Subscribe to user documents in cloud Firestore
+    const unsubDocs = subscribeToCloudDocuments(
+      currentUser.uid,
+      (activeDocs) => {
+        if (activeDocs.length > 0) {
+          setHistory(activeDocs);
+        }
+        setSyncStatus('synced');
+      },
+      (deletedDocs) => {
+        setDeletedHistory(deletedDocs);
+        setSyncStatus('synced');
+      },
+      (err) => {
+        console.error('Cloud sync error:', err);
+        setSyncStatus('error');
+      }
+    );
+
+    // Subscribe to user settings (company, clients, next counter)
+    const unsubSettings = subscribeToUserSettings(
+      currentUser.uid,
+      (cloudCompany) => {
+        saveCompanyInfo(cloudCompany);
+        setDocument((prev) => ({ ...prev, company: cloudCompany }));
+      },
+      (cloudClients) => {
+        setClients(cloudClients);
+      },
+      (nextCounter) => {
+        setNextInvoiceNumberSetting(nextCounter);
+      }
+    );
+
+    return () => {
+      unsubDocs();
+      unsubSettings();
+    };
+  }, [currentUser]);
 
   const handleTriggerInstall = async () => {
     if (deferredPrompt) {
@@ -115,30 +218,114 @@ export function App() {
     }
   };
 
-  // Save current document
-  const handleSaveDocument = () => {
+  // Save current document (locally + cloud sync)
+  const handleSaveDocument = async () => {
     const updatedHistory = saveToHistory(document);
     setHistory(updatedHistory);
+
     // Also save client if non-empty
     if (document.client.name.trim()) {
       const updatedClients = saveClient(document.client);
       setClients(updatedClients);
+      if (currentUser && !currentUser.uid.startsWith('local_')) {
+        syncClientsToCloud(currentUser.uid, updatedClients);
+      }
     }
-    showToast(`Saved ${document.docType} #${document.docNumber} to history!`);
+
+    // Cloud Sync to Firestore across devices
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      setSyncStatus('syncing');
+      const synced = await syncDocumentToCloud(currentUser.uid, document);
+      setSyncStatus(synced ? 'synced' : 'offline');
+      showToast(`Saved and synced ${document.docType} #${document.docNumber} across all devices!`);
+    } else {
+      showToast(`Saved ${document.docType} #${document.docNumber} locally!`);
+    }
   };
 
-  // Delete from history
-  const handleDeleteHistory = (id: string) => {
-    const updated = deleteFromHistory(id);
-    setHistory(updated);
-    showToast('Deleted document from history');
+  // Soft Delete from history (with online recovery preservation)
+  const handleDeleteHistory = async (id: string) => {
+    const res = softDeleteFromHistory(id);
+    setHistory(res.active);
+    setDeletedHistory(res.deleted);
+
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      await softDeleteDocumentInCloud(currentUser.uid, id);
+    }
+
+    showToast('Document moved to Online Recovery Trash');
   };
 
-  // Save Company settings
+  // Restore deleted document from online archive
+  const handleRestoreDoc = async (id: string) => {
+    const res = restoreFromDeleted(id);
+    setHistory(res.active);
+    setDeletedHistory(res.deleted);
+
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      await restoreDocumentInCloud(currentUser.uid, id);
+    }
+
+    showToast('Invoice restored to active history!');
+  };
+
+  // Restore all deleted documents
+  const handleRestoreAll = async () => {
+    const res = restoreAllFromDeleted();
+    setHistory(res.active);
+    setDeletedHistory(res.deleted);
+
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      await restoreAllDocumentsInCloud(currentUser.uid, deletedHistory);
+    }
+
+    showToast('All invoices restored successfully!');
+  };
+
+  // Permanent Delete
+  const handlePermanentDelete = async (id: string) => {
+    const updated = permanentDeleteFromDeleted(id);
+    setDeletedHistory(updated);
+
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      await permanentDeleteDocumentInCloud(currentUser.uid, id);
+    }
+
+    showToast('Document permanently removed.');
+  };
+
+  // Save Company settings (locally + cloud)
   const handleSaveCompany = (info: CompanyInfo) => {
     saveCompanyInfo(info);
     setDocument((prev) => ({ ...prev, company: info }));
-    showToast('Company branding updated!');
+
+    if (currentUser && !currentUser.uid.startsWith('local_')) {
+      syncCompanyToCloud(currentUser.uid, info);
+    }
+
+    showToast('Company branding updated and synced!');
+  };
+
+  // Migrate local documents to cloud
+  const handleMigrateToCloud = async () => {
+    if (!currentUser || currentUser.uid.startsWith('local_')) {
+      setIsAuthOpen(true);
+      return;
+    }
+
+    const count = await migrateLocalDataToCloud(
+      currentUser.uid,
+      history,
+      document.company,
+      clients
+    );
+    showToast(`Backed up ${count} invoices to cloud!`);
+  };
+
+  // Open Share Modal (with either current document or specific past document)
+  const handleOpenShare = (docToShare?: ReceiptDocument) => {
+    setShareTargetDoc(docToShare || document);
+    setIsShareOpen(true);
   };
 
   // Export handlers
@@ -179,13 +366,19 @@ export function App() {
         onPrint={handlePrint}
         onExportPdf={handleExportPdf}
         onExportExcel={handleExportExcel}
+        onOpenShare={() => handleOpenShare(document)}
         onOpenHistory={() => setIsHistoryOpen(true)}
         onOpenClients={() => setIsClientsOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenMobile={() => setIsMobileOpen(true)}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenRecovery={() => setIsRecoveryOpen(true)}
         canInstall={!!deferredPrompt}
         onInstallApp={handleTriggerInstall}
         historyCount={history.length}
+        deletedCount={deletedHistory.length}
+        currentUser={currentUser}
+        syncStatus={syncStatus}
       />
 
       {/* Mobile Tab Selector & Quick Action Bar */}
@@ -224,6 +417,15 @@ export function App() {
               <DownloadCloud className="w-3.5 h-3.5" />
             </button>
           )}
+
+          {/* Mobile Share Button */}
+          <button
+            onClick={() => handleOpenShare(document)}
+            className="p-1.5 text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer"
+            title="Share Invoice (Bluetooth, WhatsApp, Social)"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
 
           <button
             onClick={handleExportPdf}
@@ -281,9 +483,20 @@ export function App() {
                   Live A4 Document View
                 </span>
               </div>
-              <span className="text-[11px] text-slate-400">
-                Print margins optimized for standard A4
-              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleOpenShare(document)}
+                  className="py-1 px-2.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Share invoice"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Share</span>
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  Standard A4 Print
+                </span>
+              </div>
             </div>
 
             <ReceiptPreview document={document} />
@@ -298,6 +511,9 @@ export function App() {
         history={history}
         onSelectDoc={setDocument}
         onDeleteDoc={handleDeleteHistory}
+        onShareDoc={(doc) => handleOpenShare(doc)}
+        onOpenRecovery={() => setIsRecoveryOpen(true)}
+        deletedCount={deletedHistory.length}
       />
 
       <ClientsModal
@@ -307,6 +523,9 @@ export function App() {
         onSaveClient={(newClient) => {
           const updated = saveClient(newClient);
           setClients(updated);
+          if (currentUser && !currentUser.uid.startsWith('local_')) {
+            syncClientsToCloud(currentUser.uid, updated);
+          }
           showToast(`Client "${newClient.name}" saved!`);
         }}
         onApplyClient={(selected) => {
@@ -321,7 +540,11 @@ export function App() {
         company={document.company}
         onSaveCompany={handleSaveCompany}
         onUpdateNextDocNumber={(newNum) => {
+          setNextInvoiceNumberSetting(newNum);
           setDocument((prev) => ({ ...prev, docNumber: newNum }));
+          if (currentUser && !currentUser.uid.startsWith('local_')) {
+            syncInvoiceCounterToCloud(currentUser.uid, newNum);
+          }
           showToast(`Invoice counter set to #${newNum}`);
         }}
       />
@@ -332,6 +555,40 @@ export function App() {
         defaultHostIp="192.168.100.150"
         canInstall={!!deferredPrompt}
         onTriggerInstall={handleTriggerInstall}
+      />
+
+      {/* Share Modal (Bluetooth, WhatsApp, Email, Social) */}
+      <ShareModal
+        isOpen={isShareOpen}
+        onClose={() => {
+          setIsShareOpen(false);
+          setShareTargetDoc(null);
+        }}
+        document={shareTargetDoc || document}
+        onToast={showToast}
+      />
+
+      {/* Account Authentication & Multi-Device Sync Modal */}
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        currentUser={currentUser}
+        syncStatus={syncStatus}
+        historyCount={history.length}
+        onToast={showToast}
+        onMigrateToCloud={handleMigrateToCloud}
+      />
+
+      {/* Online Recovery & Deleted Trash Modal */}
+      <RecoveryModal
+        isOpen={isRecoveryOpen}
+        onClose={() => setIsRecoveryOpen(false)}
+        deletedHistory={deletedHistory}
+        onRestoreDoc={handleRestoreDoc}
+        onRestoreAll={handleRestoreAll}
+        onPermanentDelete={handlePermanentDelete}
+        onRefreshCloud={() => showToast('Cloud archive up to date!')}
+        isCloudConnected={!!currentUser && !currentUser.uid.startsWith('local_')}
       />
     </div>
   );

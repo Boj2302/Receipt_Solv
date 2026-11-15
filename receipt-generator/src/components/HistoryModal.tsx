@@ -12,6 +12,8 @@ import {
   Trash2,
   FileSpreadsheet,
   ArrowRight,
+  Share2,
+  Archive,
 } from 'lucide-react';
 
 interface HistoryModalProps {
@@ -20,6 +22,9 @@ interface HistoryModalProps {
   history: ReceiptDocument[];
   onSelectDoc: (doc: ReceiptDocument) => void;
   onDeleteDoc: (id: string) => void;
+  onShareDoc: (doc: ReceiptDocument) => void;
+  onOpenRecovery: () => void;
+  deletedCount: number;
 }
 
 export const HistoryModal: React.FC<HistoryModalProps> = ({
@@ -28,6 +33,9 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
   history,
   onSelectDoc,
   onDeleteDoc,
+  onShareDoc,
+  onOpenRecovery,
+  deletedCount,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -69,17 +77,37 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 Saved Invoices & Receipts History
               </h2>
               <p className="text-xs text-slate-500">
-                {history.length} saved document{history.length !== 1 ? 's' : ''} stored locally
+                {history.length} active document{history.length !== 1 ? 's' : ''} saved
               </p>
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Online Recovery & Trash Button */}
+            <button
+              onClick={() => {
+                onClose();
+                onOpenRecovery();
+              }}
+              className="py-1.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Open Online Recovery & Deleted Archive"
+            >
+              <Archive className="w-3.5 h-3.5 text-amber-600" />
+              <span>Recovery Trash</span>
+              {deletedCount > 0 && (
+                <span className="ml-1 text-[10px] font-extrabold px-1.5 py-0.2 bg-amber-200 text-amber-900 rounded-full">
+                  {deletedCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -140,6 +168,15 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
 
                   {/* Actions */}
                   <div className="flex items-center gap-1.5 opacity-90 group-hover:opacity-100">
+                    {/* Share Button */}
+                    <button
+                      onClick={() => onShareDoc(doc)}
+                      title="Share to Bluetooth, WhatsApp & Social Apps"
+                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors text-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <Share2 className="w-4 h-4" />
+                    </button>
+
                     <button
                       onClick={() => handleDuplicate(doc)}
                       title="Duplicate as next sequential document"
@@ -158,11 +195,11 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
 
                     <button
                       onClick={() => {
-                        if (confirm(`Delete document #${doc.docNumber}?`)) {
+                        if (confirm(`Move document #${doc.docNumber} to recovery archive? (You can restore it anytime)`)) {
                           onDeleteDoc(doc.id);
                         }
                       }}
-                      title="Delete document"
+                      title="Delete document (saved to recovery archive)"
                       className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />

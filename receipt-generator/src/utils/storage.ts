@@ -3,13 +3,14 @@ import { PRESET_CLIENTS, DEFAULT_COMPANY, DEFAULT_TAX_SETTINGS } from '../consta
 
 const KEYS = {
   HISTORY: 'receipt_history_v1',
+  DELETED_HISTORY: 'receipt_deleted_history_v1',
   CLIENTS: 'receipt_clients_v1',
   COMPANY: 'receipt_company_v1',
   TAX: 'receipt_tax_settings_v1',
   NEXT_INV_NUM: 'receipt_next_invoice_number_v1',
 };
 
-// Document History
+// Document History (Active)
 export const getHistory = (): ReceiptDocument[] => {
   try {
     const data = localStorage.getItem(KEYS.HISTORY);
@@ -20,11 +21,43 @@ export const getHistory = (): ReceiptDocument[] => {
   }
 };
 
+export const setHistory = (history: ReceiptDocument[]): void => {
+  try {
+    localStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
+  } catch (e) {
+    console.error('Error saving history to localStorage:', e);
+  }
+};
+
+// Deleted History (Recovery / Trash)
+export const getDeletedHistory = (): ReceiptDocument[] => {
+  try {
+    const data = localStorage.getItem(KEYS.DELETED_HISTORY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error('Error loading deleted history:', e);
+    return [];
+  }
+};
+
+export const setDeletedHistory = (deleted: ReceiptDocument[]): void => {
+  try {
+    localStorage.setItem(KEYS.DELETED_HISTORY, JSON.stringify(deleted));
+  } catch (e) {
+    console.error('Error saving deleted history to localStorage:', e);
+  }
+};
+
 export const saveToHistory = (doc: ReceiptDocument): ReceiptDocument[] => {
   try {
     const history = getHistory();
     const existingIndex = history.findIndex((item) => item.id === doc.id);
-    const updatedDoc = { ...doc, updatedAt: new Date().toISOString() };
+    const updatedDoc = {
+      ...doc,
+      isDeleted: false,
+      deletedAt: undefined,
+      updatedAt: new Date().toISOString(),
+    };
     
     let newHistory: ReceiptDocument[];
     if (existingIndex >= 0) {
@@ -32,7 +65,7 @@ export const saveToHistory = (doc: ReceiptDocument): ReceiptDocument[] => {
       newHistory[existingIndex] = updatedDoc;
     } else {
       newHistory = [updatedDoc, ...history];
-      // Increment the sequential counter if this was a new document
+      // Increment sequential counter if this was a new document
       advanceInvoiceNumber(doc.docNumber);
     }
     
@@ -44,15 +77,106 @@ export const saveToHistory = (doc: ReceiptDocument): ReceiptDocument[] => {
   }
 };
 
-export const deleteFromHistory = (id: string): ReceiptDocument[] => {
+/**
+ * Soft delete: Removes document from active history and adds to deleted archive
+ * with deletion timestamp. This allows instant recovery!
+ */
+export const softDeleteFromHistory = (id: string): { active: ReceiptDocument[]; deleted: ReceiptDocument[] } => {
   try {
-    const history = getHistory().filter((item) => item.id !== id);
-    localStorage.setItem(KEYS.HISTORY, JSON.stringify(history));
-    return history;
+    const history = getHistory();
+    const target = history.find((item) => item.id === id);
+    const updatedActive = history.filter((item) => item.id !== id);
+    localStorage.setItem(KEYS.HISTORY, JSON.stringify(updatedActive));
+
+    let updatedDeleted = getDeletedHistory();
+    if (target) {
+      const deletedDoc: ReceiptDocument = {
+        ...target,
+        isDeleted: true,
+        deletedAt: new Date().toISOString(),
+      };
+      updatedDeleted = [deletedDoc, ...updatedDeleted.filter((item) => item.id !== id)];
+      localStorage.setItem(KEYS.DELETED_HISTORY, JSON.stringify(updatedDeleted));
+    }
+
+    return { active: updatedActive, deleted: updatedDeleted };
   } catch (e) {
-    console.error('Error deleting document:', e);
+    console.error('Error soft deleting document:', e);
+    return { active: getHistory(), deleted: getDeletedHistory() };
+  }
+};
+
+/**
+ * Recovers a deleted document back to active history.
+ */
+export const restoreFromDeleted = (id: string): { active: ReceiptDocument[]; deleted: ReceiptDocument[] } => {
+  try {
+    const deleted = getDeletedHistory();
+    const target = deleted.find((item) => item.id === id);
+    const updatedDeleted = deleted.filter((item) => item.id !== id);
+    localStorage.setItem(KEYS.DELETED_HISTORY, JSON.stringify(updatedDeleted));
+
+    let updatedActive = getHistory();
+    if (target) {
+      const restoredDoc: ReceiptDocument = {
+        ...target,
+        isDeleted: false,
+        deletedAt: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      updatedActive = [restoredDoc, ...updatedActive.filter((item) => item.id !== id)];
+      localStorage.setItem(KEYS.HISTORY, JSON.stringify(updatedActive));
+    }
+
+    return { active: updatedActive, deleted: updatedDeleted };
+  } catch (e) {
+    console.error('Error restoring document:', e);
+    return { active: getHistory(), deleted: getDeletedHistory() };
+  }
+};
+
+/**
+ * Permanently deletes a document from trash.
+ */
+export const permanentDeleteFromDeleted = (id: string): ReceiptDocument[] => {
+  try {
+    const deleted = getDeletedHistory().filter((item) => item.id !== id);
+    localStorage.setItem(KEYS.DELETED_HISTORY, JSON.stringify(deleted));
+    return deleted;
+  } catch (e) {
+    console.error('Error permanently deleting document:', e);
     return [];
   }
+};
+
+/**
+ * Restores all deleted documents at once.
+ */
+export const restoreAllFromDeleted = (): { active: ReceiptDocument[]; deleted: ReceiptDocument[] } => {
+  try {
+    const deleted = getDeletedHistory();
+    const active = getHistory();
+    const restored = deleted.map((d) => ({
+      ...d,
+      isDeleted: false,
+      deletedAt: undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    const newActive = [...restored, ...active];
+    localStorage.setItem(KEYS.HISTORY, JSON.stringify(newActive));
+    localStorage.setItem(KEYS.DELETED_HISTORY, JSON.stringify([]));
+
+    return { active: newActive, deleted: [] };
+  } catch (e) {
+    console.error('Error restoring all documents:', e);
+    return { active: getHistory(), deleted: getDeletedHistory() };
+  }
+};
+
+// Legacy alias
+export const deleteFromHistory = (id: string): ReceiptDocument[] => {
+  return softDeleteFromHistory(id).active;
 };
 
 // Sequential Ordered Invoice Number Logic
@@ -92,7 +216,7 @@ export const getNextOrderedInvoiceNumber = (): string => {
     const next = (highest + 1).toString();
     localStorage.setItem(KEYS.NEXT_INV_NUM, incrementInvoiceNumber(next));
     return next;
-  } catch (e) {
+  } catch {
     return '2026001';
   }
 };
@@ -119,7 +243,7 @@ export const getSavedClients = (): ClientInfo[] => {
   try {
     const data = localStorage.getItem(KEYS.CLIENTS);
     return data ? JSON.parse(data) : PRESET_CLIENTS;
-  } catch (e) {
+  } catch {
     return PRESET_CLIENTS;
   }
 };
@@ -143,7 +267,7 @@ export const getSavedCompany = (): CompanyInfo => {
   try {
     const data = localStorage.getItem(KEYS.COMPANY);
     return data ? JSON.parse(data) : DEFAULT_COMPANY;
-  } catch (e) {
+  } catch {
     return DEFAULT_COMPANY;
   }
 };
@@ -157,7 +281,7 @@ export const getSavedTaxSettings = (): TaxSettings => {
   try {
     const data = localStorage.getItem(KEYS.TAX);
     return data ? JSON.parse(data) : DEFAULT_TAX_SETTINGS;
-  } catch (e) {
+  } catch {
     return DEFAULT_TAX_SETTINGS;
   }
 };

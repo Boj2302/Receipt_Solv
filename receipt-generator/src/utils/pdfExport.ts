@@ -1,15 +1,26 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 
-export const exportToPdf = async (
+export interface GeneratedPdfResult {
+  blob: Blob;
+  file: File;
+  fileName: string;
+  pdf: jsPDF;
+}
+
+/**
+ * Renders the receipt off-screen at standard A4 2x resolution and produces a PDF Blob and File.
+ * Useful for downloading or directly passing to Web Share API (Bluetooth, Quick Share, AirDrop, etc.).
+ */
+export const generatePdfBlob = async (
   elementId: string,
   fileName: string = 'document.pdf',
   onStatusUpdate?: (status: string) => void
-): Promise<boolean> => {
+): Promise<GeneratedPdfResult | null> => {
   const element = document.getElementById(elementId);
   if (!element) {
     console.error(`Element with id ${elementId} not found`);
-    return false;
+    return null;
   }
 
   onStatusUpdate?.('Preparing high-resolution PDF...');
@@ -62,17 +73,31 @@ export const exportToPdf = async (
     const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
 
     pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, Math.min(pdfHeight, 297));
-    pdf.save(fileName);
-    onStatusUpdate?.('PDF downloaded successfully!');
-    return true;
+    const blob = pdf.output('blob');
+    const file = new File([blob], fileName, { type: 'application/pdf' });
+
+    return { blob, file, fileName, pdf };
   } catch (error) {
     console.error('Failed to generate PDF via html2canvas:', error);
     if (document.body.contains(clone)) {
       document.body.removeChild(clone);
     }
-    // Return false so caller can notify user
+    return null;
+  }
+};
+
+export const exportToPdf = async (
+  elementId: string,
+  fileName: string = 'document.pdf',
+  onStatusUpdate?: (status: string) => void
+): Promise<boolean> => {
+  const result = await generatePdfBlob(elementId, fileName, onStatusUpdate);
+  if (!result) {
     return false;
   }
+  result.pdf.save(fileName);
+  onStatusUpdate?.('PDF downloaded successfully!');
+  return true;
 };
 
 export const triggerPrint = () => {
